@@ -1,6 +1,6 @@
 # 🩸 RedThread – Intelligent Blood Donation Platform
 
-A full-stack hackathon-ready blood donation platform with AI matching, Twilio integration, blockchain verification, and admin verification system.
+A full-stack blood donation platform with AI matching, Twilio integration, blockchain verification, and admin verification system.
 
 ## 🏗 Tech Stack
 

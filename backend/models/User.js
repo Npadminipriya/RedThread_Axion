@@ -10,6 +10,8 @@ const userSchema = new mongoose.Schema({
   isVerified: { type: Boolean, default: false },
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
   documentUrl: { type: String, default: null },
+  rejectionReason: { type: String, default: null },
+  rejectedAt: { type: Date, default: null },
   otp: { type: String, default: null },
   otpExpiry: { type: Date, default: null },
   isPhoneVerified: { type: Boolean, default: false },

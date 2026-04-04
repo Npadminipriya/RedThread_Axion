@@ -8,6 +8,8 @@ const hospitalSchema = new mongoose.Schema({
     address: { type: String, default: '' }
   },
   licenseNumber: { type: String, default: '' },
+  documentUrl: { type: String, default: null }
+
 }, { timestamps: true });
 
 hospitalSchema.index({ 'location': '2dsphere' });

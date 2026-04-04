@@ -17,6 +17,10 @@ const donorSchema = new mongoose.Schema({
   donationCount: { type: Number, default: 0 },
   lastDonationDate: { type: Date, default: null },
   cooldownUntil: { type: Date, default: null },
+  trustScore: { type: Number, default: 100, min: 0, max: 100 },
+  acceptedCount: { type: Number, default: 0 },
+  completedCount: { type: Number, default: 0 },
+  falseAcceptCount: { type: Number, default: 0 },
   badges: [{ type: String }],
   blockchainRecords: [{
     hash: String,

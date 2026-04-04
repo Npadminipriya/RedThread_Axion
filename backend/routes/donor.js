@@ -4,7 +4,9 @@ const Donor = require('../models/Donor');
 const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
 const Request = require('../models/Request');
+const DonationCompletion = require('../models/DonationCompletion');
 const { protect, authorize, requireApproval } = require('../middleware/auth');
+const { notifyCooldownStarted } = require('../services/notificationService');
 
 router.use(protect, authorize('donor'), requireApproval);
 
@@ -21,22 +23,37 @@ router.get('/profile', async (req, res) => {
 });
 
 // @route   PUT /api/donor/profile
-// @desc    Update donor profile
+// @desc    Update donor profile (including user details)
 router.put('/profile', async (req, res) => {
   try {
-    const { bloodGroup, address, latitude, longitude } = req.body;
+    const { bloodGroup, address, latitude, longitude, name, phone, availability } = req.body;
+    const donor = await Donor.findOne({ userId: req.user._id });
+    if (!donor) return res.status(404).json({ message: 'Donor not found' });
+
     const update = {};
     if (bloodGroup) update.bloodGroup = bloodGroup;
+    if (availability !== undefined) update.availability = availability;
+
     if (address || latitude || longitude) {
-      const donor = await Donor.findOne({ userId: req.user._id });
       update.location = {
         type: 'Point',
         coordinates: [parseFloat(longitude) || donor.location.coordinates[0], parseFloat(latitude) || donor.location.coordinates[1]],
         address: address || donor.location.address
       };
     }
-    const donor = await Donor.findOneAndUpdate({ userId: req.user._id }, update, { new: true });
-    res.json({ donor });
+
+    const updatedDonor = await Donor.findOneAndUpdate({ userId: req.user._id }, update, { new: true })
+      .populate('userId', 'name email phone');
+
+    // Also update User model fields if provided
+    if (name || phone) {
+      const userUpdate = {};
+      if (name) userUpdate.name = name;
+      if (phone) userUpdate.phone = phone;
+      await User.findByIdAndUpdate(req.user._id, userUpdate);
+    }
+
+    res.json({ donor: updatedDonor });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -76,7 +93,17 @@ router.get('/history', async (req, res) => {
       'matchedDonors.donorId': donor._id
     }).populate('hospitalId', 'name').sort({ createdAt: -1 });
 
-    res.json({ history: requests, blockchainRecords: donor.blockchainRecords });
+    // Get completion status for each request
+    const completions = await DonationCompletion.find({ donorId: donor._id });
+    const completionMap = {};
+    completions.forEach(c => { completionMap[c.requestId.toString()] = c; });
+
+    const historyWithCompletions = requests.map(r => ({
+      ...r.toObject(),
+      completion: completionMap[r._id.toString()] || null,
+    }));
+
+    res.json({ history: historyWithCompletions, blockchainRecords: donor.blockchainRecords });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -124,6 +151,9 @@ router.post('/respond/:requestId', async (req, res) => {
       request.status = 'matched';
       request.fulfilledBy = { type: 'donor', id: donor._id };
 
+      // Increment acceptedCount for trust score
+      donor.acceptedCount += 1;
+
       // Award coins
       const coinAmount = donor.isRareBloodGroup() ? 100 : 50;
       donor.coins += coinAmount;
@@ -167,6 +197,9 @@ router.post('/respond/:requestId', async (req, res) => {
       }
 
       await donor.save();
+
+      // Notify about cooldown
+      await notifyCooldownStarted(req.user._id, donor.cooldownUntil);
     }
 
     await request.save();
@@ -211,9 +244,35 @@ router.get('/leaderboard', async (req, res) => {
       donations: d.donationCount,
       badges: d.badges,
       bloodGroup: d.bloodGroup,
+      trustScore: d.trustScore,
     }));
 
     res.json({ leaderboard });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// @route   GET /api/donor/trust-score
+// @desc    Get trust score breakdown
+router.get('/trust-score', async (req, res) => {
+  try {
+    const donor = await Donor.findOne({ userId: req.user._id });
+    if (!donor) return res.status(404).json({ message: 'Donor not found' });
+
+    const isReliable = donor.trustScore >= 60;
+
+    res.json({
+      trustScore: donor.trustScore,
+      acceptedCount: donor.acceptedCount,
+      completedCount: donor.completedCount,
+      falseAcceptCount: donor.falseAcceptCount,
+      isReliable,
+      rating: donor.trustScore >= 90 ? 'Excellent' :
+        donor.trustScore >= 75 ? 'Good' :
+          donor.trustScore >= 60 ? 'Average' :
+            'Needs Improvement',
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }

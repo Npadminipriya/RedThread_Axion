@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authAPI } from '../services/api';
-import { Heart, Mail, Lock, Phone, User, MapPin, FileText, Droplets, Building2, Database, ArrowRight, Eye, EyeOff, Upload } from 'lucide-react';
+import { Heart, Mail, Lock, Phone, User, MapPin, FileText, Droplets, Building2, Database, ArrowRight, Eye, EyeOff, Upload, Navigation } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -12,6 +12,8 @@ export default function Register() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [errors, setErrors] = useState({});
   const [form, setForm] = useState({
     name: '', email: '', phone: '', password: '',
     role: 'donor', bloodGroup: 'O+',
@@ -20,10 +22,60 @@ export default function Register() {
   });
   const [document, setDocument] = useState(null);
 
-  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+  const handleChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+    if (errors[e.target.name]) setErrors({ ...errors, [e.target.name]: null });
+  };
+
+  const getLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported by your browser');
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setForm(prev => ({
+          ...prev,
+          latitude: pos.coords.latitude.toFixed(6),
+          longitude: pos.coords.longitude.toFixed(6),
+        }));
+        setLocating(false);
+        toast.success('Location detected!');
+        setErrors(prev => ({ ...prev, latitude: null, longitude: null }));
+      },
+      (err) => {
+        setLocating(false);
+        toast.error('Could not detect location. Please enter manually.');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const validate = () => {
+    const errs = {};
+    if (!form.name.trim()) errs.name = 'Name is required';
+    if (!form.email.trim()) errs.email = 'Email is required';
+    else if (!/\S+@\S+\.\S+/.test(form.email)) errs.email = 'Valid email required';
+    if (!form.phone.trim()) errs.phone = 'Phone is required';
+    if (!form.password || form.password.length < 6) errs.password = 'Min 6 characters';
+    if (!form.address.trim()) errs.address = 'Address is required';
+    if (!form.latitude && !form.longitude) errs.latitude = 'Use "My Location" or enter coordinates';
+    if (form.role === 'donor' && !form.bloodGroup) errs.bloodGroup = 'Select blood group';
+    if ((form.role === 'hospital' || form.role === 'bloodbank')) {
+      if (!form.licenseNumber.trim()) errs.licenseNumber = 'License number required';
+      if (!document) errs.document = 'License document required';
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validate()) {
+      toast.error('Please fill all required fields');
+      return;
+    }
     setLoading(true);
     try {
       const formData = new FormData();
@@ -36,7 +88,19 @@ export default function Register() {
       const routes = { admin: '/admin', hospital: '/hospital', bloodbank: '/bloodbank', donor: '/donor' };
       navigate(routes[data.user.role] || '/');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Registration failed');
+      const msg = err.response?.data?.message || 'Registration failed';
+      toast.error(msg);
+      // Parse server errors
+      if (err.response?.data?.errors) {
+        const serverErrs = {};
+        err.response.data.errors.forEach(e => {
+          if (e.toLowerCase().includes('name')) serverErrs.name = e;
+          else if (e.toLowerCase().includes('email')) serverErrs.email = e;
+          else if (e.toLowerCase().includes('phone')) serverErrs.phone = e;
+          else if (e.toLowerCase().includes('password')) serverErrs.password = e;
+        });
+        setErrors(prev => ({ ...prev, ...serverErrs }));
+      }
     } finally {
       setLoading(false);
     }
@@ -47,6 +111,8 @@ export default function Register() {
     { value: 'hospital', icon: Building2, label: 'Hospital', desc: 'Request blood for patients' },
     { value: 'bloodbank', icon: Database, label: 'Blood Bank', desc: 'Manage blood inventory' },
   ];
+
+  const FieldError = ({ field }) => errors[field] ? <p className="text-red-400 text-xs mt-1">{errors[field]}</p> : null;
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 pt-20 pb-10">
@@ -70,7 +136,7 @@ export default function Register() {
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Role Selection */}
             <div>
-              <label className="block text-sm font-medium text-dark-300 mb-2">I am a</label>
+              <label className="block text-sm font-medium text-dark-300 mb-2">I am a <span className="text-brand-400">*</span></label>
               <div className="grid grid-cols-3 gap-3">
                 {roleCards.map(r => (
                   <button type="button" key={r.value} onClick={() => setForm({ ...form, role: r.value })}
@@ -88,54 +154,58 @@ export default function Register() {
             {/* Name & Email */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-dark-300 mb-1.5">Full Name</label>
+                <label className="block text-sm font-medium text-dark-300 mb-1.5">Full Name <span className="text-brand-400">*</span></label>
                 <div className="relative">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
                   <input type="text" name="name" value={form.name} onChange={handleChange}
-                    className="input-field pl-10" placeholder="John Doe" required />
+                    className={`input-field pl-10 ${errors.name ? 'border-red-500' : ''}`} placeholder="John Doe" required />
                 </div>
+                <FieldError field="name" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-dark-300 mb-1.5">Email</label>
+                <label className="block text-sm font-medium text-dark-300 mb-1.5">Email <span className="text-brand-400">*</span></label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
                   <input type="email" name="email" value={form.email} onChange={handleChange}
-                    className="input-field pl-10" placeholder="you@email.com" required />
+                    className={`input-field pl-10 ${errors.email ? 'border-red-500' : ''}`} placeholder="you@email.com" required />
                 </div>
+                <FieldError field="email" />
               </div>
             </div>
 
             {/* Phone & Password */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-dark-300 mb-1.5">Phone</label>
+                <label className="block text-sm font-medium text-dark-300 mb-1.5">Phone <span className="text-brand-400">*</span></label>
                 <div className="relative">
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
                   <input type="tel" name="phone" value={form.phone} onChange={handleChange}
-                    className="input-field pl-10" placeholder="+1234567890" required />
+                    className={`input-field pl-10 ${errors.phone ? 'border-red-500' : ''}`} placeholder="+1234567890" required />
                 </div>
+                <FieldError field="phone" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-dark-300 mb-1.5">Password</label>
+                <label className="block text-sm font-medium text-dark-300 mb-1.5">Password <span className="text-brand-400">*</span></label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
                   <input type={showPassword ? 'text' : 'password'} name="password" value={form.password} onChange={handleChange}
-                    className="input-field pl-10 pr-10" placeholder="••••••" required minLength={6} />
+                    className={`input-field pl-10 pr-10 ${errors.password ? 'border-red-500' : ''}`} placeholder="••••••" required minLength={6} />
                   <button type="button" onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300">
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                <FieldError field="password" />
               </div>
             </div>
 
             {/* Donor: Blood Group */}
             {form.role === 'donor' && (
               <div>
-                <label className="block text-sm font-medium text-dark-300 mb-1.5">Blood Group</label>
+                <label className="block text-sm font-medium text-dark-300 mb-1.5">Blood Group <span className="text-brand-400">*</span></label>
                 <div className="grid grid-cols-4 gap-2">
                   {bloodGroups.map(bg => (
-                    <button type="button" key={bg} onClick={() => setForm({ ...form, bloodGroup: bg })}
+                    <button type="button" key={bg} onClick={() => { setForm({ ...form, bloodGroup: bg }); setErrors({ ...errors, bloodGroup: null }); }}
                       className={`py-2 rounded-lg text-sm font-bold transition-all
                         ${form.bloodGroup === bg
                           ? 'bg-brand-500/20 text-brand-400 border border-brand-500/50 shadow-lg shadow-brand-500/10'
@@ -144,46 +214,59 @@ export default function Register() {
                     </button>
                   ))}
                 </div>
+                <FieldError field="bloodGroup" />
               </div>
             )}
 
             {/* Location */}
             <div>
-              <label className="block text-sm font-medium text-dark-300 mb-1.5">Address</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-sm font-medium text-dark-300">Address <span className="text-brand-400">*</span></label>
+                <button type="button" onClick={getLocation} disabled={locating}
+                  className="flex items-center gap-1 text-xs text-brand-400 hover:text-brand-300 transition-colors">
+                  <Navigation className="w-3 h-3" />
+                  {locating ? 'Detecting...' : '📍 Use My Location'}
+                </button>
+              </div>
               <div className="relative">
                 <MapPin className="absolute left-3 top-3 w-4 h-4 text-dark-500" />
                 <input type="text" name="address" value={form.address} onChange={handleChange}
-                  className="input-field pl-10" placeholder="Your address" />
+                  className={`input-field pl-10 ${errors.address ? 'border-red-500' : ''}`} placeholder="Your address" required />
               </div>
+              <FieldError field="address" />
               <div className="grid grid-cols-2 gap-3 mt-2">
                 <input type="number" name="latitude" value={form.latitude} onChange={handleChange}
-                  className="input-field text-sm" placeholder="Latitude" step="any" />
+                  className={`input-field text-sm ${errors.latitude ? 'border-red-500' : ''}`} placeholder="Latitude" step="any" required />
                 <input type="number" name="longitude" value={form.longitude} onChange={handleChange}
-                  className="input-field text-sm" placeholder="Longitude" step="any" />
+                  className={`input-field text-sm ${errors.longitude ? 'border-red-500' : ''}`} placeholder="Longitude" step="any" required />
               </div>
+              <FieldError field="latitude" />
             </div>
 
             {/* Hospital/BloodBank: License */}
             {(form.role === 'hospital' || form.role === 'bloodbank') && (
               <>
                 <div>
-                  <label className="block text-sm font-medium text-dark-300 mb-1.5">License Number</label>
+                  <label className="block text-sm font-medium text-dark-300 mb-1.5">License Number <span className="text-brand-400">*</span></label>
                   <div className="relative">
                     <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
                     <input type="text" name="licenseNumber" value={form.licenseNumber} onChange={handleChange}
-                      className="input-field pl-10" placeholder="License number" />
+                      className={`input-field pl-10 ${errors.licenseNumber ? 'border-red-500' : ''}`} placeholder="License number" required />
                   </div>
+                  <FieldError field="licenseNumber" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-dark-300 mb-1.5">License Document</label>
-                  <label className="flex items-center gap-3 p-4 rounded-xl border-2 border-dashed border-dark-600 hover:border-brand-500/50 cursor-pointer transition-all bg-dark-900/50">
+                  <label className="block text-sm font-medium text-dark-300 mb-1.5">License Document <span className="text-brand-400">*</span></label>
+                  <label className={`flex items-center gap-3 p-4 rounded-xl border-2 border-dashed cursor-pointer transition-all bg-dark-900/50
+                    ${errors.document ? 'border-red-500/50 hover:border-red-400/50' : 'border-dark-600 hover:border-brand-500/50'}`}>
                     <Upload className="w-5 h-5 text-dark-500" />
                     <span className="text-sm text-dark-400">
                       {document ? document.name : 'Upload license (PDF, JPG, PNG)'}
                     </span>
-                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setDocument(e.target.files[0])}
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => { setDocument(e.target.files[0]); setErrors({ ...errors, document: null }); }}
                       className="hidden" />
                   </label>
+                  <FieldError field="document" />
                 </div>
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3">
                   <p className="text-xs text-amber-400">⚠️ Hospital and Blood Bank accounts require admin verification before access is granted.</p>

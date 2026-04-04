@@ -8,11 +8,46 @@ const { generateToken } = require('../middleware/auth');
 const { generateOTP, sendOTP } = require('../services/twilioService');
 const upload = require('../middleware/upload');
 
+// Validation helper
+const validateRegistration = (body, file) => {
+  const errors = [];
+  const { name, email, phone, password, role, bloodGroup, address, latitude, longitude, licenseNumber } = body;
+
+  if (!name || !name.trim()) errors.push('Full name is required');
+  if (!email || !email.trim()) errors.push('Email is required');
+  else if (!/\S+@\S+\.\S+/.test(email)) errors.push('Valid email is required');
+  if (!phone || !phone.trim()) errors.push('Phone number is required');
+  else if (!/^\+?[1-9]\d{6,14}$/.test(phone.replace(/\s/g, ''))) errors.push('Valid phone number is required (e.g., +1234567890)');
+  if (!password || password.length < 6) errors.push('Password must be at least 6 characters');
+  if (!role || !['donor', 'hospital', 'bloodbank'].includes(role)) errors.push('Valid role is required');
+  if (!address || !address.trim()) errors.push('Address is required');
+  if (!latitude && !longitude) errors.push('Location coordinates are required (use the "Use My Location" button)');
+
+  if (role === 'donor') {
+    if (!bloodGroup || !['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].includes(bloodGroup)) {
+      errors.push('Valid blood group is required for donors');
+    }
+  }
+
+  if (role === 'hospital' || role === 'bloodbank') {
+    if (!licenseNumber || !licenseNumber.trim()) errors.push('License number is required for hospitals and blood banks');
+    if (!file) errors.push('License document upload is required for verification');
+  }
+
+  return errors;
+};
+
 // @route   POST /api/auth/register
 // @desc    Register a new user
 router.post('/register', upload.single('document'), async (req, res) => {
   try {
     const { name, email, phone, password, role, bloodGroup, address, latitude, longitude, licenseNumber } = req.body;
+
+    // Validate all mandatory fields
+    const validationErrors = validateRegistration(req.body, req.file);
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ message: validationErrors.join('. '), errors: validationErrors });
+    }
 
     // Check existing user
     const existingUser = await User.findOne({ $or: [{ email }, { phone }] });
@@ -89,6 +124,11 @@ router.post('/register', upload.single('document'), async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+
     const user = await User.findOne({ email });
 
     if (!user) {
@@ -112,6 +152,7 @@ router.post('/login', async (req, res) => {
         role: user.role,
         status: user.status,
         isVerified: user.isVerified,
+        rejectionReason: user.rejectionReason,
       }
     });
   } catch (error) {
@@ -186,6 +227,7 @@ router.post('/verify-otp', async (req, res) => {
         role: user.role,
         status: user.status,
         isVerified: user.isVerified,
+        rejectionReason: user.rejectionReason,
       }
     });
   } catch (error) {

@@ -4,6 +4,8 @@ const Request = require('../models/Request');
 const Donor = require('../models/Donor');
 const BloodBank = require('../models/BloodBank');
 const CoinTransaction = require('../models/CoinTransaction');
+const { notifyIVRAccepted, notifyIVRRejected, notifyDonationConfirmed } = require('../services/notificationService');
+const { sendSMS } = require('../services/twilioService');
 
 // @route   POST /api/twilio/voice-twiml
 // @desc    Generate TwiML for voice calls
@@ -34,7 +36,7 @@ router.post('/voice-twiml', (req, res) => {
 });
 
 // @route   POST /api/twilio/handle-keypress
-// @desc    Handle DTMF keypress from voice call
+// @desc    Handle DTMF keypress from voice call (IVR response system)
 router.post('/handle-keypress', async (req, res) => {
   try {
     const { requestId, targetType } = req.query;
@@ -52,14 +54,19 @@ router.post('/handle-keypress', async (req, res) => {
     if (targetType === 'donor') {
       const matchIdx = request.matchedDonors.findIndex(d => d.callSid === callSid);
       if (matchIdx >= 0) {
+        const donorMatch = request.matchedDonors[matchIdx];
+
         if (digit === '1') {
-          request.matchedDonors[matchIdx].status = 'accepted';
-          request.matchedDonors[matchIdx].respondedAt = new Date();
+          // ACCEPT via IVR — update donor status without website interaction
+          donorMatch.status = 'accepted';
+          donorMatch.respondedAt = new Date();
           request.status = 'matched';
 
-          // Award coins
-          const donor = await Donor.findById(request.matchedDonors[matchIdx].donorId);
+          const donor = await Donor.findById(donorMatch.donorId);
           if (donor) {
+            // Track accepted count for trust score
+            donor.acceptedCount += 1;
+
             const coinAmount = donor.isRareBloodGroup() ? 100 : 50;
             donor.coins += coinAmount;
             donor.donationCount += 1;
@@ -83,13 +90,27 @@ router.post('/handle-keypress', async (req, res) => {
               donorId: donor._id, type: 'earned', amount: coinAmount,
               reason: `Blood donation via phone (+${coinAmount} coins)`, requestId: request._id,
             });
+
+            // Send in-app notification + SMS confirmation
+            await notifyIVRAccepted(donorMatch.userId, request._id);
+            const User = require('../models/User');
+            const user = await User.findById(donorMatch.userId);
+            if (user?.phone) {
+              await sendSMS(user.phone,
+                `✅ RedThread: You accepted the ${request.bloodGroup} blood donation request via phone. Please proceed to the hospital. You earned ${coinAmount} coins!`
+              );
+            }
           }
-          responseMessage = 'Thank you for accepting the donation request. You will receive further instructions via SMS.';
+          responseMessage = 'Thank you for accepting the donation request. You will receive further instructions via SMS. Your account has been automatically updated.';
         } else {
-          request.matchedDonors[matchIdx].status = 'rejected';
-          request.matchedDonors[matchIdx].respondedAt = new Date();
+          // REJECT via IVR
+          donorMatch.status = 'rejected';
+          donorMatch.respondedAt = new Date();
+          await notifyIVRRejected(donorMatch.userId, request._id);
           responseMessage = 'You have rejected the request. Thank you for your time.';
         }
+      } else {
+        responseMessage = 'We could not identify your call. Please log in to the platform to respond.';
       }
     } else if (targetType === 'bloodbank') {
       const matchIdx = request.matchedBloodBanks.findIndex(b => b.callSid === callSid);
@@ -99,10 +120,12 @@ router.post('/handle-keypress', async (req, res) => {
           request.matchedBloodBanks[matchIdx].respondedAt = new Date();
           request.status = 'matched';
           request.fulfilledBy = { type: 'bloodbank', id: request.matchedBloodBanks[matchIdx].bloodBankId };
+          await notifyIVRAccepted(request.matchedBloodBanks[matchIdx].userId, request._id);
           responseMessage = 'Thank you for confirming availability. The hospital will contact you shortly.';
         } else {
           request.matchedBloodBanks[matchIdx].status = 'rejected';
           request.matchedBloodBanks[matchIdx].respondedAt = new Date();
+          await notifyIVRRejected(request.matchedBloodBanks[matchIdx].userId, request._id);
           responseMessage = 'You have rejected the request. Thank you.';
         }
       }
@@ -133,8 +156,6 @@ router.post('/status-callback', async (req, res) => {
           const match = request.matchedDonors.find(d => d.callSid === CallSid);
           if (match) {
             match.status = 'no_response';
-            // Send SMS backup
-            const { sendSMS } = require('../services/twilioService');
             const User = require('../models/User');
             const user = await User.findById(match.userId);
             if (user) {

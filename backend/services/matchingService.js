@@ -1,5 +1,5 @@
 // Smart AI Matching Service
-// Matches donors and blood banks based on blood group, location, availability
+// Matches donors and blood banks based on blood group, location, availability, trust score
 
 const Donor = require('../models/Donor');
 const BloodBank = require('../models/BloodBank');
@@ -76,6 +76,13 @@ const matchDonors = async (bloodGroup, coordinates, maxDistance = 50) => {
 
         // Donation count bonus (experienced donors)
         score += Math.min(donor.donationCount * 2, 10);
+
+        // Trust score factor — higher trust = higher priority
+        // Donors below 60 trust score get penalized
+        if (donor.trustScore >= 90) score += 25;
+        else if (donor.trustScore >= 75) score += 15;
+        else if (donor.trustScore >= 60) score += 5;
+        else score -= 20; // Unreliable donors get deprioritized
 
         return { donor, score, distance };
       })

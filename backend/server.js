@@ -26,6 +26,9 @@ app.use('/api/donor', require('./routes/donor'));
 app.use('/api/hospital', require('./routes/hospital'));
 app.use('/api/bloodbank', require('./routes/bloodbank'));
 app.use('/api/twilio', require('./routes/twilio'));
+app.use('/api/notifications', require('./routes/notification'));
+app.use('/api/expense', require('./routes/expense'));
+app.use('/api/search', require('./routes/search'));
 
 // Health check
 app.get('/api/health', (req, res) => {

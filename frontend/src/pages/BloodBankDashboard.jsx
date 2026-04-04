@@ -55,6 +55,24 @@ export default function BloodBankDashboard() {
 
   if (loading) return <LoadingSpinner />;
 
+  if (user?.status === 'rejected') {
+    return (
+      <div className="min-h-screen pt-20 pb-10 px-4 flex items-center justify-center">
+        <div className="glass-card p-10 text-center max-w-md">
+          <XCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-white mb-2">Account Rejected</h2>
+          <p className="text-dark-400 mb-3">Your blood bank account has been rejected by the admin.</p>
+          {user?.rejectionReason && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-4">
+              <p className="text-sm text-red-400"><strong>Reason:</strong> {user.rejectionReason}</p>
+            </div>
+          )}
+          <StatusBadge status="rejected" />
+        </div>
+      </div>
+    );
+  }
+
   if (user?.status === 'pending') {
     return (
       <div className="min-h-screen pt-20 pb-10 px-4 flex items-center justify-center">
